@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug SalmonApp",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "ZED_SDK_ROOT": "C:\\Program Files (x86)\\ZED SDK",
+        "PATH": "C:\\Program Files (x86)\\ZED SDK\\bin;${env:PATH}"
+      }
+    }
+  ]
+}
