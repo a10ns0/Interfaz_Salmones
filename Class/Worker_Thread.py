@@ -7,6 +7,9 @@ import numpy as np
 import pyzed.sl as sl
 from ultralytics import YOLO
 
+
+import pandas as pd # <--- NUEVA IMPORTACIÓN
+from datetime import datetime # Para nombrar el archivo con fecha
 # --- CONFIGURACIÓN DE KEYPOINTS ---
 # (Mismos índices que en tu test.py)
 KEYPOINT_HEAD = 0
@@ -28,6 +31,13 @@ class VideoProcessingThread(threading.Thread):
         self.objects = None
         self.detection_runtime_params = None
 
+        # NUEVO: Lista para acumular datos
+        self.fish_data_log = [] 
+        self.frame_count = 0 # Contador de frames
+
+    
+    
+    
     def load_model(self):
         print(" Cargando modelo YOLO...")
         # NOTA: Usamos 'best.pt' para coincidir con tu test.py
@@ -105,6 +115,10 @@ class VideoProcessingThread(threading.Thread):
         
         return False, 0.0
 
+   
+   
+   
+   
     def process_frame(self, frame, point_cloud):
         # 1. MEJORA DE IMAGEN (Tu código original de HSV/CLAHE/Sharpen)
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) 
@@ -175,7 +189,26 @@ class VideoProcessingThread(threading.Thread):
                         
                         # Guardar para enviar a GUI (solo del último detectado por ahora)
                         if valid_l:
-                            dimensions_output = (largo_m * 100, ancho_m * 100 if valid_w else 0.0)
+                            largo_cm = largo_m * 100
+                            ancho_cm = ancho_m * 100 if valid_w else 0.0
+
+                            # Calcular peso estimado
+                            peso_g = self.calculate_weight(largo_cm)
+
+                            dimensions_output = (largo_cm, ancho_cm)
+                            # --- NUEVO: GUARDAR EN EL REGISTRO (PANDAS) ---
+                            data_entry = {
+                                "Frame": self.frame_count,
+                                "Timestamp": datetime.now().strftime("%H:%M:%S"),
+                                "ID_Salmon": obj.id,
+                                "Largo_cm": round(largo_cm, 2),
+                                "Ancho_cm": round(ancho_cm, 2),
+                                "Peso_Estimado_g": round(peso_g, 2),
+                                "Confianza_Deteccion": round(obj.confidence, 2),
+                            }
+                            self.fish_data_log.append(data_entry)
+
+
 
                         # --- DIBUJAR EN FRAME (Visualización) ---
                         
@@ -201,8 +234,96 @@ class VideoProcessingThread(threading.Thread):
                             cv2.line(sharpened_frame, (int(p_top[0]), int(p_top[1])), 
                                      (int(p_bottom[0]), int(p_bottom[1])), (255,0,0), 2)
 
-        estimaciones = {"dimensiones": dimensions_output}
-        return sharpened_frame, estimaciones
+
+        return sharpened_frame, {"dimensiones": dimensions_output}
+
+    
+    
+    
+    
+    
+    
+    def calculate_weight(self, length_cm):
+            """
+            Calcula el peso basado en el Factor de Condición de Fulton (K).
+            Formula: W = (K / 100) * L^3
+            
+            Referencias para K en Salmo salar:
+            - 1.00 - 1.10: Salmón salvaje o post-desove (Flaco).
+            - 1.20 - 1.30: Salmón de cultivo promedio.
+            - 1.30 - 1.45: Salmón de cultivo calidad Premium (Gordo/Robusto).
+            """
+            
+            # Factor de Condición (Ajustable según la realidad del centro de cultivo)
+            K_factor = 1.36 
+            
+            # Convertimos K a 'a' y asumimos isometría (b=3)
+            a = K_factor / 100
+            b = 3.0
+            
+            weight_g = a * (length_cm ** b)
+            return weight_g
+    
+
+
+
+
+
+
+
+# --- 2. MÉTODO PARA GUARDAR CON FILTRO DE CALIDAD ---
+    def save_data_to_file(self):
+        """ 
+        Genera el reporte, pero FILTRA los peces que aparecieron muy poco tiempo
+        (ruido o falsos positivos).
+        """
+        if not self.fish_data_log:
+            print(" [INFO] No hay datos para generar reporte.")
+            return
+
+        print(" [INFO] Procesando datos y eliminando ruido...")
+        df = pd.DataFrame(self.fish_data_log)
+        
+        # 1. Agrupar por ID
+        grouped = df.groupby('ID_Salmon')
+        
+        # 2. FILTRO: El salmón debe haber sido detectado en al menos N frames
+        # (Por ejemplo, 5 frames, aprox 0.2 segundos si vas a 30fps)
+        MIN_FRAMES_THRESHOLD = 5 
+        
+        valid_ids = grouped.filter(lambda x: len(x) >= MIN_FRAMES_THRESHOLD)
+
+        if valid_ids.empty:
+            print(" [INFO] Se detectaron objetos, pero ninguno superó el umbral de permanencia (ruido).")
+            return
+
+        # 3. Generar Resumen de los peces válidos
+        summary_df = valid_ids.groupby('ID_Salmon').agg({
+            'Largo_cm': 'mean',
+            'Ancho_cm': 'mean',
+            'Peso_Estimado_g': 'mean',
+            'Confianza_Deteccion': 'mean',
+            'Frame': 'count',                 # Cuántos frames duró
+        })
+        
+        # Renombrar columnas para que se vea bonito en Excel
+        summary_df.columns = ['Largo_Prom_cm', 'Ancho_Prom_cm', 'Peso_Prom_g', 
+                              'Confianza_Prom', 'Total_Frames']
+
+        # 4. Guardar
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename_raw = f"registro_completo_{timestamp}.csv"
+        filename_summary = f"resumen_final_peces_{timestamp}.csv"
+        
+        valid_ids.to_csv(filename_raw, index=False)
+        summary_df.to_csv(filename_summary)
+        
+        print(f" [EXITO] Reporte generado: {len(summary_df)} salmones válidos identificados.")
+        print(f"         Archivos: {filename_summary} (Resumen) y {filename_raw} (Detalle)")
+
+
+
+
 
     def run(self):
         print(" [DEBUG] Hilo: RUN() INICIADA.")
@@ -228,11 +349,16 @@ class VideoProcessingThread(threading.Thread):
         image_zed = sl.Mat()
         point_cloud = sl.Mat()
 
+        self.frame_count = 0 # Reiniciar contador
+
         try:
             while not self.stop_event.is_set():
                 self.pause_event.wait()
                 
                 if self.zed.grab() == sl.ERROR_CODE.SUCCESS:
+                    
+                    self.frame_count += 1 # <--- INCREMENTAR CONTADOR
+
                     self.zed.retrieve_image(image_zed, sl.VIEW.LEFT)
                     self.zed.retrieve_measure(point_cloud, sl.MEASURE.XYZ)
 
@@ -258,13 +384,41 @@ class VideoProcessingThread(threading.Thread):
         finally:
             if self.zed.is_opened():
                 self.zed.close()
+            
+            # --- NUEVO: GUARDAR DATOS AL TERMINAR ---
+            self.save_data_to_file()
+
             self.data_queue.put(None)
             print(" Hilo detenido.")
+
+
+
 """
 
 Cuando se quiera volver a trabajar con el modelo de estimación, 
 se recomienda volver a activar el modo sl.DEPTH_MODE.NEURAL o sl.DEPTH_MODE.ULTRA 
 y dejar que la optimización de 30 o mas minutos se complete.
 
+
+"""
+
+
+
+"""
+
+Al cerrar el programa o terminar el video, se generarán dos archivos CSV en la carpeta de tu proyecto:
+
+1)
+registros_completos_fecha.csv: Un registro fotograma a fotograma. Ideal para ver la evolución y limpiar ruido después.
+
+Ej: ID 1, Frame 10, Largo 50.1
+
+Ej: ID 1, Frame 11, Largo 50.2
+
+
+2)
+resumen_por_pez_fecha.csv: Una tabla limpia con un salmón por fila.
+
+Ej: ID 1 | Largo Promedio: 50.15 cm | Peso Promedio: 1.5 kg | Visto en: 45 frames
 
 """
