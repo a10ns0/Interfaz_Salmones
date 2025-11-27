@@ -10,6 +10,8 @@ from ultralytics import YOLO
 
 import pandas as pd # <--- NUEVA IMPORTACIÓN
 from datetime import datetime # Para nombrar el archivo con fecha
+
+
 # --- CONFIGURACIÓN DE KEYPOINTS ---
 # (Mismos índices que en tu test.py)
 KEYPOINT_HEAD = 0
@@ -18,6 +20,17 @@ KEYPOINT_TOP = 4
 KEYPOINT_BOTTOM = 5
 
 
+# --- COLORES PARA KEYPOINTS (Formato BGR de OpenCV) ---
+# 0: Head, 1: Lateral, 2: Tail, 3: Eye, 4: Dorsal, 5: Pelvic, 6: Adipose, 7: Anal, etc.
+KP_PALETTE = {
+    0: (0, 0, 255),    # HEAD   -> Rojo (Punto crítico)
+    2: (255, 0, 0),    # TAIL   -> Azul (Punto crítico)
+    4: (0, 255, 0),    # DORSAL -> Verde
+    5: (0, 255, 0),    # PELVIC -> Verde
+    3: (0, 255, 255),  # EYE    -> Amarillo
+    # El resto (lateral, adipose, etc.) en Blanco por defecto
+}
+DEFAULT_COLOR = (200, 200, 200) # Gris claro para puntos menos importantes
 
 
 # --- NUEVO: FACTOR DE CORRECCIÓN (CALIBRACIÓN) ---
