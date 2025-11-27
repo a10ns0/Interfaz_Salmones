@@ -17,6 +17,17 @@ KEYPOINT_TAIL = 2
 KEYPOINT_TOP = 4
 KEYPOINT_BOTTOM = 5
 
+
+
+
+# --- NUEVO: FACTOR DE CORRECCIÓN (CALIBRACIÓN) ---
+# Si el software mide 145cm y la realidad es 75cm -> Factor = 75/145 = 0.517
+# Ajusta este valor manualmente hasta que las medidas coincidan con la realidad.
+CORRECTION_FACTOR = 0.45
+
+
+
+
 class VideoProcessingThread(threading.Thread):
     
     def __init__(self, video_path, data_queue, pause_event, stop_event):
@@ -66,33 +77,76 @@ class VideoProcessingThread(threading.Thread):
         self.objects = sl.Objects()
         self.detection_runtime_params = sl.ObjectDetectionRuntimeParameters()
 
+   
+   
+
+    
+
+
+
+#¿Qué hace este cambio?
+#Paso 1: Obliga a YOLO a fusionar cajas que se solapan (IoU).
+#Paso 2: Si YOLO falla y aun así entrega dos cajas muy pegadas (por ejemplo, con 5 pixeles de diferencia), nuestro código manual calcula la distancia. 
+#Si la nueva caja está a menos de 20 píxeles de una que ya procesamos en este mismo frame, la ignoramos.
     def detections_to_custom_box(self, results, im_width, im_height):
-        """ Convierte detecciones YOLO a formato ZED """
-        output = []
-        if results[0].boxes:
-            boxes = results[0].boxes
-            for box in boxes:
-                xywh = box.xywh[0].cpu().numpy()
-                cls = int(box.cls[0])
-                conf = float(box.conf[0])
+            """ Convierte detecciones YOLO a formato ZED con filtrado de duplicados """
+            output = []
+            if results[0].boxes:
+                boxes = results[0].boxes
                 
-                x_c, y_c, w, h = xywh
-                x_min = x_c - (w / 2)
-                y_min = y_c - (h / 2)
-                x_max = x_c + (w / 2)
-                y_max = y_c + (h / 2)
+                # Lista temporal para verificar superposiciones
+                accepted_boxes = []
 
-                zed_obj = sl.CustomBoxObjectData()
-                zed_obj.bounding_box_2d = np.array([
-                    [x_min, y_min], [x_max, y_min],
-                    [x_max, y_max], [x_min, y_max]
-                ])
-                zed_obj.label = cls
-                zed_obj.probability = conf
-                zed_obj.is_grounded = False 
-                output.append(zed_obj)
-        return output
+                for box in boxes:
+                    xywh = box.xywh[0].cpu().numpy()
+                    cls = int(box.cls[0])
+                    conf = float(box.conf[0])
+                    
+                    x_c, y_c, w, h = xywh
+                    
+                    # --- FILTRO ANTI-DUPLICADOS (MANUAL NMS) ---
+                    is_duplicate = False
+                    for acc_box in accepted_boxes:
+                        # Calculamos distancia entre centros
+                        dist = math.hypot(x_c - acc_box[0], y_c - acc_box[1])
+                        # Si el centro de esta caja está a menos de 20 pixeles de una ya aceptada
+                        if dist < 20: 
+                            is_duplicate = True
+                            break
+                    
+                    if is_duplicate:
+                        continue # Saltamos esta caja, es un fantasma
 
+                    # Si no es duplicado, la agregamos
+                    accepted_boxes.append((x_c, y_c))
+                    
+                    # --- CREACIÓN DEL OBJETO ZED ---
+                    x_min = x_c - (w / 2)
+                    y_min = y_c - (h / 2)
+                    x_max = x_c + (w / 2)
+                    y_max = y_c + (h / 2)
+
+                    zed_obj = sl.CustomBoxObjectData()
+                    zed_obj.bounding_box_2d = np.array([
+                        [x_min, y_min], [x_max, y_min],
+                        [x_max, y_max], [x_min, y_max]
+                    ])
+                    zed_obj.label = cls
+                    zed_obj.probability = conf
+                    zed_obj.is_grounded = False 
+                    output.append(zed_obj)
+                    
+            return output
+
+    
+    
+    
+
+
+    
+    
+    
+    
     def get_3d_distance(self, p1_pixel, p2_pixel, point_cloud):
         """ Lógica idéntica a tu test.py """
         u1, v1 = int(p1_pixel[0]), int(p1_pixel[1])
@@ -189,13 +243,20 @@ class VideoProcessingThread(threading.Thread):
                         
                         # Guardar para enviar a GUI (solo del último detectado por ahora)
                         if valid_l:
-                            largo_cm = largo_m * 100
-                            ancho_cm = ancho_m * 100 if valid_w else 0.0
+                            # 1. Obtenemos la medida "cruda" del sensor
+                            largo_raw_cm = largo_m * 100
+                            ancho_raw_cm = ancho_m * 100 if valid_w else 0.0
+
+                            # 2. APLICAMOS EL FACTOR DE CORRECCIÓN
+                            largo_cm = largo_raw_cm * CORRECTION_FACTOR
+                            ancho_cm = ancho_raw_cm * CORRECTION_FACTOR
 
                             # Calcular peso estimado
                             peso_g = self.calculate_weight(largo_cm)
 
                             dimensions_output = (largo_cm, ancho_cm)
+
+
                             # --- NUEVO: GUARDAR EN EL REGISTRO (PANDAS) ---
                             data_entry = {
                                 "Frame": self.frame_count,
@@ -226,13 +287,6 @@ class VideoProcessingThread(threading.Thread):
                         cv2.putText(sharpened_frame, dims_text, (top_left[0], top_left[1]-10), 
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-                        # 3. Líneas sobre el cuerpo (Rojo Largo, Azul Ancho)
-                        if valid_l: 
-                            cv2.line(sharpened_frame, (int(p_head[0]), int(p_head[1])), 
-                                     (int(p_tail[0]), int(p_tail[1])), (0,0,255), 2)
-                        if valid_w: 
-                            cv2.line(sharpened_frame, (int(p_top[0]), int(p_top[1])), 
-                                     (int(p_bottom[0]), int(p_bottom[1])), (255,0,0), 2)
 
 
         return sharpened_frame, {"dimensiones": dimensions_output}
@@ -255,7 +309,7 @@ class VideoProcessingThread(threading.Thread):
             """
             
             # Factor de Condición (Ajustable según la realidad del centro de cultivo)
-            K_factor = 1.36 
+            K_factor = 1.25 
             
             # Convertimos K a 'a' y asumimos isometría (b=3)
             a = K_factor / 100

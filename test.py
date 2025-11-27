@@ -105,7 +105,7 @@ def main():
 
     init_params = sl.InitParameters(input_t=input_type)
     init_params.coordinate_units = sl.UNIT.METER 
-    init_params.depth_mode = sl.DEPTH_MODE.ULTRA 
+    init_params.depth_mode = sl.DEPTH_MODE.NEURAL
     
     # IMPORTANTE: Desactiva el modo tiempo real para procesar cada frame sin saltos
     # (útil si el procesamiento de IA es pesado)
