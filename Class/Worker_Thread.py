@@ -343,7 +343,7 @@ class VideoProcessingThread(threading.Thread):
         
         # 2. FILTRO: El salmón debe haber sido detectado en al menos N frames
         # (Por ejemplo, 5 frames, aprox 0.2 segundos si vas a 30fps)
-        MIN_FRAMES_THRESHOLD = 5 
+        MIN_FRAMES_THRESHOLD = 30
         
         valid_ids = grouped.filter(lambda x: len(x) >= MIN_FRAMES_THRESHOLD)
 
