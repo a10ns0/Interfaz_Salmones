@@ -36,7 +36,7 @@ DEFAULT_COLOR = (200, 200, 200) # Gris claro para puntos menos importantes
 # --- NUEVO: FACTOR DE CORRECCIÓN (CALIBRACIÓN) ---
 # Si el software mide 145cm y la realidad es 75cm -> Factor = 75/145 = 0.517
 # Ajusta este valor manualmente hasta que las medidas coincidan con la realidad.
-CORRECTION_FACTOR = 0.45
+CORRECTION_FACTOR = 0.517
 
 
 
@@ -197,7 +197,7 @@ class VideoProcessingThread(threading.Thread):
         kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]]) 
         
         # Esta es la imagen sobre la que dibujaremos
-        sharpened_frame = cv2.filter2D(processed_frame, -1, kernel)
+        sharpened_frame = cv2.filter2D(frame, -1, kernel)
 
         # 2. INFERENCIA YOLO
         results = self.model(sharpened_frame, verbose=False)
@@ -322,11 +322,11 @@ class VideoProcessingThread(threading.Thread):
             """
             
             # Factor de Condición (Ajustable según la realidad del centro de cultivo)
-            K_factor = 1.25 
+            K_factor = 1.30
             
             # Convertimos K a 'a' y asumimos isometría (b=3)
             a = K_factor / 100
-            b = 3.0
+            b = 2.85
             
             weight_g = a * (length_cm ** b)
             return weight_g
@@ -366,9 +366,9 @@ class VideoProcessingThread(threading.Thread):
 
         # 3. Generar Resumen de los peces válidos
         summary_df = valid_ids.groupby('ID_Salmon').agg({
-            'Largo_cm': 'mean',
-            'Ancho_cm': 'mean',
-            'Peso_Estimado_g': 'mean',
+            'Largo_cm': 'median',
+            'Ancho_cm': 'median',
+            'Peso_Estimado_g': 'median',
             'Confianza_Deteccion': 'mean',
             'Frame': 'count',                 # Cuántos frames duró
         })
